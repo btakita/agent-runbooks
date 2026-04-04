@@ -19,7 +19,7 @@ Place runbooks in a `runbooks/` directory under whichever agent config directory
 
 ```
 your-project/
-├── .agents/runbooks/           # or .ai/runbooks/, .agent/runbooks/
+├── .agent/runbooks/            # or .agents/runbooks/, .ai/runbooks/
 │   ├── precommit.md
 │   ├── prerelease.md
 │   ├── deploy.md
@@ -28,12 +28,12 @@ your-project/
 └── ...
 ```
 
-The parent directory name is an emerging convention — `.ai/`, `.agents/`, `.agent/`, and tool-specific directories (`.claude/`, `.cursor/`) all work. What matters is the pattern: externalize procedures into on-demand files.
+The parent directory name is an emerging convention — `.agent/`, `.agents/`, `.ai/`, and tool-specific directories (`.claude/`, `.cursor/`) all work. What matters is the pattern: externalize procedures into on-demand files.
 
 Each runbook is a standalone markdown file with a clear title, description, and procedural steps. Your instruction file references them with a single line:
 
 ```markdown
-Before committing, follow `.agents/runbooks/precommit.md`.
+Before committing, follow `.agent/runbooks/precommit.md`.
 ```
 
 25 lines of inline procedure replaced by 1 line of reference. The agent reads the runbook on demand when it actually needs the procedure.
@@ -44,7 +44,7 @@ Before committing, follow `.agents/runbooks/precommit.md`.
 |-----------|----------|--------|
 | `.ai/` | [AgentInfra](https://github.com/JayCheng113/AgentInfra), [dot-ai](https://github.com/luisrudge/dot-ai) (archived), [agnostic-ai](https://github.com/betagouv/agnostic-ai) | Early-stage |
 | `.agents/` | [ACS spec](https://acs.jackby03.com/), [.agents Protocol](https://dotagentsprotocol.com/) | Multiple competing specs |
-| `.agent/` | [dotagent](https://github.com/johnlindquist/dotagent) | Community proposals |
+| `.agent/` | [dotagent](https://github.com/johnlindquist/dotagent) (122 stars) | Most-starred proposal |
 | Tool-specific | `.claude/`, `.cursor/rules/`, `.windsurf/rules/` | Established but vendor-locked |
 
 Pick whichever aligns with your existing setup. The runbooks pattern works with any of them.
