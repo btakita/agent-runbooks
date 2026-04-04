@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use regex::Regex;
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs;
@@ -35,6 +36,9 @@ enum Command {
     Validate {
         /// Path to the runbook file
         runbook_file: PathBuf,
+        /// Path to ontology directory for term validation
+        #[arg(long)]
+        ontology_dir: Option<PathBuf>,
     },
     /// Copy a template runbook into a skill directory
     Install {
@@ -54,7 +58,10 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Audit { skill_dir } => cmd_audit(&resolve_dir(&cli.dir, &skill_dir)),
         Command::List { skill_dir, json } => cmd_list(&resolve_dir(&cli.dir, &skill_dir), json),
-        Command::Validate { runbook_file } => cmd_validate(&runbook_file),
+        Command::Validate {
+            runbook_file,
+            ontology_dir,
+        } => cmd_validate(&runbook_file, ontology_dir.as_deref()),
         Command::Install {
             skill_dir,
             from,
@@ -260,10 +267,35 @@ fn cmd_list(skill_dir: &Path, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_validate(runbook_file: &Path) -> Result<()> {
+fn cmd_validate(runbook_file: &Path, ontology_dir: Option<&Path>) -> Result<()> {
     let content = fs::read_to_string(runbook_file)
         .with_context(|| format!("reading {}", runbook_file.display()))?;
 
+    let (errors, warnings) = validate_runbook(&content, runbook_file, ontology_dir);
+
+    for e in &errors {
+        println!("ERROR: {}", e);
+    }
+    for w in &warnings {
+        println!("WARN:  {}", w);
+    }
+
+    if errors.is_empty() && warnings.is_empty() {
+        println!("OK: no issues found");
+    }
+
+    if !errors.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Core validation logic, returns (errors, warnings). Extracted for testability.
+fn validate_runbook(
+    content: &str,
+    runbook_file: &Path,
+    ontology_dir: Option<&Path>,
+) -> (Vec<String>, Vec<String>) {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
 
@@ -309,21 +341,116 @@ fn cmd_validate(runbook_file: &Path) -> Result<()> {
         }
     }
 
-    for e in &errors {
-        println!("ERROR: {}", e);
-    }
-    for w in &warnings {
-        println!("WARN:  {}", w);
+    // Module harness validation
+    validate_module_harness(content, &mut warnings);
+
+    // Ontology validation
+    if let Some(dir) = ontology_dir {
+        validate_ontology(content, dir, &mut warnings);
     }
 
-    if errors.is_empty() && warnings.is_empty() {
-        println!("OK: no issues found");
+    (errors, warnings)
+}
+
+/// Check module harness sections (Spec, Agentic Contracts, Evals).
+fn validate_module_harness(content: &str, warnings: &mut Vec<String>) {
+    let has_spec = content.lines().any(|l| l.trim() == "## Spec");
+    let has_evals = content.lines().any(|l| l.trim() == "## Evals");
+
+    if !has_spec && !has_evals {
+        return;
     }
 
-    if !errors.is_empty() {
-        std::process::exit(1);
+    // Validate eval names are snake_case
+    if has_evals {
+        let snake_re = Regex::new(r"^[a-z][a-z0-9_]*$").unwrap();
+        let mut in_evals = false;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("## ") {
+                in_evals = trimmed == "## Evals";
+                continue;
+            }
+            if !in_evals {
+                continue;
+            }
+            // Look for eval names in list items: - eval_name or - `eval_name`
+            if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+                let item = trimmed
+                    .trim_start_matches("- ")
+                    .trim_start_matches("* ")
+                    .trim();
+                let name = if item.starts_with('`') && item.contains('`') {
+                    let end = item[1..].find('`').map(|i| &item[1..1 + i]);
+                    end.unwrap_or(item)
+                } else {
+                    item.split_whitespace().next().unwrap_or(item)
+                };
+                if !name.is_empty() && !snake_re.is_match(name) {
+                    warnings.push(format!("Eval name `{}` is not snake_case", name));
+                }
+            }
+        }
     }
-    Ok(())
+
+    // Validate spec entries reference content in the file
+    if has_spec {
+        let mut in_spec = false;
+        let content_lower = content.to_lowercase();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("## ") {
+                in_spec = trimmed == "## Spec";
+                continue;
+            }
+            if !in_spec {
+                continue;
+            }
+            if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+                let item = trimmed
+                    .trim_start_matches("- ")
+                    .trim_start_matches("* ")
+                    .trim();
+                // Check that spec text appears somewhere else in the file
+                if !item.is_empty() {
+                    let item_lower = item.to_lowercase();
+                    let first_word = item_lower.split_whitespace().next().unwrap_or("");
+                    // Check if any content outside the spec section references this concept
+                    if first_word.len() > 3
+                        && content_lower
+                            .matches(first_word)
+                            .count()
+                            < 2
+                    {
+                        warnings.push(format!(
+                            "Spec entry may not reference file content: {}",
+                            item
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Check ontology term annotations [term:Name] against files in the ontology directory.
+fn validate_ontology(content: &str, ontology_dir: &Path, warnings: &mut Vec<String>) {
+    let term_re = Regex::new(r"\[term:([A-Za-z_-]+)\]").unwrap();
+    let mut seen = BTreeSet::new();
+    for cap in term_re.captures_iter(content) {
+        let name = cap.get(1).unwrap().as_str();
+        if !seen.insert(name.to_string()) {
+            continue;
+        }
+        let term_file = ontology_dir.join(format!("{}.md", name.to_lowercase()));
+        if !term_file.exists() {
+            warnings.push(format!(
+                "Ontology term `{}` has no file at {}",
+                name,
+                term_file.display()
+            ));
+        }
+    }
 }
 
 fn cmd_install(skill_dir: &Path, template: &Path, add_ref: bool) -> Result<()> {
@@ -671,5 +798,209 @@ See runbooks/not-a-ref.md for info.
         let refs = parse_skill_refs(content);
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].1, "real.md");
+    }
+
+    // -- module harness --
+
+    #[test]
+    fn validate_harness_good_eval_names() {
+        let content = "\
+# Runbook
+
+## Steps
+
+1. Do thing
+
+## Evals
+
+- good_eval
+- another_eval_2
+";
+        let mut warnings = Vec::new();
+        validate_module_harness(content, &mut warnings);
+        assert!(
+            warnings.is_empty(),
+            "Expected no warnings, got: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn validate_harness_bad_eval_names() {
+        let content = "\
+# Runbook
+
+## Steps
+
+1. Do thing
+
+## Evals
+
+- goodName
+- BadName
+- `kebab-case`
+";
+        let mut warnings = Vec::new();
+        validate_module_harness(content, &mut warnings);
+        assert!(
+            warnings.len() >= 2,
+            "Expected at least 2 warnings, got: {:?}",
+            warnings
+        );
+        assert!(warnings.iter().any(|w| w.contains("goodName")));
+        assert!(warnings.iter().any(|w| w.contains("BadName")));
+    }
+
+    #[test]
+    fn validate_harness_not_present() {
+        let content = "\
+# Runbook
+
+## Steps
+
+1. Do thing
+";
+        let mut warnings = Vec::new();
+        validate_module_harness(content, &mut warnings);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_harness_spec_references_content() {
+        let content = "\
+# Deploy Runbook
+
+## Spec
+
+- deploy the application
+
+## Steps
+
+1. Deploy the application to production
+";
+        let mut warnings = Vec::new();
+        validate_module_harness(content, &mut warnings);
+        // \"deploy\" appears in both spec and steps, so no warning expected
+        assert!(
+            !warnings.iter().any(|w| w.contains("deploy")),
+            "Unexpected warning about deploy: {:?}",
+            warnings
+        );
+    }
+
+    // -- ontology --
+
+    #[test]
+    fn validate_ontology_terms_found() {
+        let tmp = TempDir::new().unwrap();
+        let onto_dir = tmp.path().join("ontology");
+        fs::create_dir_all(&onto_dir).unwrap();
+        fs::write(onto_dir.join("domain.md"), "# Domain\n").unwrap();
+        fs::write(onto_dir.join("context.md"), "# Context\n").unwrap();
+
+        let content = "# Runbook\n\nThis covers the [term:Domain] and [term:Context] concepts.\n";
+        let mut warnings = Vec::new();
+        validate_ontology(content, &onto_dir, &mut warnings);
+        assert!(
+            warnings.is_empty(),
+            "Expected no warnings, got: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn validate_ontology_terms_missing() {
+        let tmp = TempDir::new().unwrap();
+        let onto_dir = tmp.path().join("ontology");
+        fs::create_dir_all(&onto_dir).unwrap();
+
+        let content = "# Runbook\n\nThis covers [term:Nonexistent] stuff.\n";
+        let mut warnings = Vec::new();
+        validate_ontology(content, &onto_dir, &mut warnings);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("Nonexistent"));
+    }
+
+    #[test]
+    fn validate_ontology_not_provided() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("test.md");
+        fs::write(
+            &path,
+            "# Test\n\nUses [term:Domain] but no ontology dir.\n\n## Steps\n\n1. Go\n",
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        let (errors, _warnings) = validate_runbook(&content, &path, None);
+        // Should not error just because ontology dir is absent
+        assert!(errors.is_empty());
+    }
+
+    // -- edge cases --
+
+    #[test]
+    fn list_empty_runbooks_dir() {
+        let tmp = TempDir::new().unwrap();
+        let skill = create_skill_dir(&tmp);
+        write_skill_md(&skill, "# Skill\n");
+
+        let files = list_runbook_files(&skill.join("runbooks")).unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn list_no_runbooks_dir() {
+        let tmp = TempDir::new().unwrap();
+        let skill = tmp.path().join("skill");
+        fs::create_dir_all(&skill).unwrap();
+
+        let files = list_runbook_files(&skill.join("runbooks")).unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn skill_md_without_runbooks_section() {
+        let content = "\
+# Skill
+
+## Overview
+
+Just an overview, no runbooks section.
+";
+        let refs = parse_skill_refs(content);
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn unicode_in_title() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("unicode.md");
+        fs::write(
+            &path,
+            "# Déploiement 日本語 🚀\n\n## Steps\n\n1. Faire le déploiement\n",
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        let (errors, warnings) = validate_runbook(&content, &path, None);
+        assert!(errors.is_empty());
+        // Title is present, steps section present, numbered step present
+        assert!(
+            !warnings.iter().any(|w| w.contains("title")),
+            "Should not warn about title"
+        );
+    }
+
+    #[test]
+    fn validate_duplicate_ontology_terms_warned_once() {
+        let tmp = TempDir::new().unwrap();
+        let onto_dir = tmp.path().join("ontology");
+        fs::create_dir_all(&onto_dir).unwrap();
+
+        let content = "# Test\n\n[term:Missing] and again [term:Missing] twice.\n";
+        let mut warnings = Vec::new();
+        validate_ontology(content, &onto_dir, &mut warnings);
+        assert_eq!(warnings.len(), 1, "Duplicate term should warn only once");
     }
 }
