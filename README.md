@@ -68,6 +68,17 @@ One-line description of when this procedure applies.
    ...
 ```
 
+## Runbooks vs Rules
+
+AI coding tools use "rules" (`.cursor/rules/`, `.windsurf/rules/`, `.rules`) for **declarative policy** — conventions, coding standards, and architectural guidelines that shape agent behavior. Rules are typically always-loaded or conditionally attached.
+
+Runbooks are different: they contain **imperative procedures** — step-by-step instructions for specific tasks. The distinction matters because it tells the agent what to expect:
+
+- **Rules** = "use snake_case for Python functions" (policy, always relevant)
+- **Runbooks** = "step 1: run `make check`, step 2: verify output, step 3: stage files..." (procedure, relevant only during that task)
+
+Loading mode (eager/lazy) is orthogonal — both rules and runbooks can be loaded on demand. The content type is what differs.
+
 ## Design Principles
 
 1. **One procedure per file.** Each runbook covers exactly one workflow.
