@@ -109,7 +109,7 @@ fn extract_runbook_filename(line: &str) -> Option<String> {
     let idx = line.find("runbooks/")?;
     let rest = &line[idx + "runbooks/".len()..];
     let end = rest
-        .find(|c: char| c == ')' || c == ']' || c == ' ' || c == '`' || c == '"')
+        .find([')', ']', ' ', '`', '"'])
         .unwrap_or(rest.len());
     let name = &rest[..end];
     if name.ends_with(".md") && !name.is_empty() {
@@ -122,10 +122,10 @@ fn extract_runbook_filename(line: &str) -> Option<String> {
 /// Extract a trigger phrase from a runbook reference line.
 fn extract_trigger(line: &str) -> String {
     // Pattern: `trigger` — ...
-    if let Some(start) = line.find('`') {
-        if let Some(end) = line[start + 1..].find('`') {
-            return line[start + 1..start + 1 + end].to_string();
-        }
+    if let Some(start) = line.find('`')
+        && let Some(end) = line[start + 1..].find('`')
+    {
+        return line[start + 1..start + 1 + end].to_string();
     }
     // Pattern: - text — ... or - text -- ...
     let stripped = line.trim_start_matches("- ").trim_start_matches("* ");
@@ -169,7 +169,7 @@ fn cmd_audit(skill_dir: &Path) -> Result<()> {
     let referenced: BTreeSet<String> = refs.iter().map(|(_, f)| f.clone()).collect();
     let mut has_issues = false;
 
-    println!("{:<10} {:<40} {}", "STATUS", "PATH", "TRIGGER");
+    println!("{:<10} {:<40} TRIGGER", "STATUS", "PATH");
     println!("{}", "-".repeat(70));
 
     for (trigger, filename) in &refs {
@@ -190,10 +190,9 @@ fn cmd_audit(skill_dir: &Path) -> Result<()> {
         if !referenced.contains(file) {
             has_issues = true;
             println!(
-                "{:<10} {:<40} {}",
+                "{:<10} {:<40}",
                 "orphan",
                 format!("runbooks/{}", file),
-                ""
             );
         }
     }
@@ -249,8 +248,8 @@ fn cmd_list(skill_dir: &Path, json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&entries)?);
     } else {
         println!(
-            "{:<30} {:<40} {:<6} {}",
-            "FILENAME", "TITLE", "LINES", "REF"
+            "{:<30} {:<40} {:<6} REF",
+            "FILENAME", "TITLE", "LINES"
         );
         println!("{}", "-".repeat(85));
         for e in &entries {
