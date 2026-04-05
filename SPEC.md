@@ -50,6 +50,38 @@ When a runbook contains a module harness header (Spec/Agentic Contracts/Evals), 
 
 These are soft checks (warnings only, do not affect exit code).
 
+## Agentic Contracts
+
+### Following a runbook
+
+When following a runbook, the agent promises to:
+- Execute every step in order
+- Not skip verification steps
+- Report which steps were completed
+
+### Validating runbooks
+
+When validating runbooks, the agent promises to:
+- Check for required H1 title
+- Check for checklist section
+- Check for imperative voice in steps
+
+### Scaffolding runbooks
+
+When scaffolding runbooks, the agent promises to:
+- Never overwrite existing files
+- Use bundled defaults only for missing files
+
+## Evals
+
+Planned evaluations for agentic contract compliance:
+
+- `step_execution_order` — Does the agent follow steps in order?
+- `verification_not_skipped` — Does the agent complete verification steps?
+- `scaffold_no_overwrite` — Does `init_runbooks` preserve existing files?
+
+See the [`evals/`](evals/) directory for eval definitions.
+
 ## Ontology Annotations
 
 Runbooks can include ontology term annotations using inline markers:
