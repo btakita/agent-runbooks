@@ -116,6 +116,28 @@ See the [`examples/`](examples/) directory for real-world runbooks:
 - [dotagent](https://github.com/johnlindquist/dotagent) — Universal parser/converter for AI rules across IDEs
 - [ACS](https://acs.jackby03.com/) — Agentic Collaboration Standard proposing `.agents/`
 
+## Install
+
+### Quick install (prebuilt binary)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/btakita/agent-runbooks/main/install.sh | sh
+```
+
+### Cargo
+
+```bash
+cargo install agent-runbooks
+```
+
+### From source
+
+```bash
+git clone https://github.com/btakita/agent-runbooks.git
+cd agent-runbooks
+cargo install --path .
+```
+
 ## License
 
 [CC0 1.0](LICENSE) — Public domain. Use this convention however you like.
