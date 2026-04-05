@@ -2,6 +2,9 @@
 name = "agent-runbooks"
 version = "0.1.0"
 edition = "2024"
+description = "Convention and validation for AI agent runbooks"
+license = "CC0-1.0"
+repository = "https://github.com/btakita/agent-runbooks"
 
 [dependencies]
 anyhow = "1"
